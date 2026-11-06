@@ -1,0 +1,17 @@
+{
+  "name": "ledgerline",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Money movement with a ledger you can prove",
+  "workspaces": ["backend", "frontend"],
+  "scripts": {
+    "build": "npm run build --workspace backend && npm run build --workspace frontend",
+    "test": "npm run test --workspace backend",
+    "typecheck": "npm run typecheck --workspace backend && npm run typecheck --workspace frontend",
+    "db:migrate": "npm run db:migrate --workspace backend",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "app": "node scripts/app.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

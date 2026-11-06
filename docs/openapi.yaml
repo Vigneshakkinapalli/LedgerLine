@@ -1,0 +1,105 @@
+openapi: 3.0.3
+info:
+  title: LedgerLine API
+  version: 0.3.0
+  description: Authenticated money movement with PostgreSQL-enforced balanced ledger postings.
+servers:
+  - url: http://localhost:3000
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      security: []
+      responses:
+        '200': { description: Database health }
+  /api/v1/auth/register:
+    post:
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Credentials' } } } }
+      responses:
+        '201': { description: Registered session }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/auth/login:
+    post:
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Credentials' } } } }
+      responses:
+        '200': { description: Authenticated session }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: Login rate limited }
+  /api/v1/auth/logout:
+    post: { responses: { '204': { description: Session revoked } } }
+  /api/v1/auth/me:
+    get: { responses: { '200': { description: Current authenticated user } } }
+  /api/v1/accounts:
+    get: { responses: { '200': { description: Authorized accounts } } }
+  /api/v1/accounts/{accountId}/transactions:
+    get:
+      parameters: [{ $ref: '#/components/parameters/accountId' }]
+      responses: { '200': { description: Account statement } }
+  /api/v1/accounts/{accountId}/transfer-destinations:
+    get:
+      parameters: [{ $ref: '#/components/parameters/accountId' }]
+      responses: { '200': { description: Authorized active customer destinations with masked labels } }
+  /api/v1/analytics:
+    get: { responses: { '200': { description: Persisted daily financial activity summaries } } }
+  /api/v1/notifications:
+    get: { responses: { '200': { description: User-scoped security and transaction notifications } } }
+  /api/v1/accounts/{accountId}/deposit:
+    post:
+      parameters: [{ $ref: '#/components/parameters/accountId' }, { $ref: '#/components/parameters/idempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Amount' } } } }
+      responses: { '201': { description: Posted deposit }, '422': { description: Refused attempt } }
+  /api/v1/accounts/{accountId}/withdraw:
+    post:
+      parameters: [{ $ref: '#/components/parameters/accountId' }, { $ref: '#/components/parameters/idempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Amount' } } } }
+      responses: { '201': { description: Posted withdrawal }, '422': { description: Refused attempt } }
+  /api/v1/accounts/{accountId}/transfer:
+    post:
+      parameters: [{ $ref: '#/components/parameters/accountId' }, { $ref: '#/components/parameters/idempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Transfer' } } } }
+      responses: { '201': { description: Posted transfer }, '409': { $ref: '#/components/responses/Conflict' }, '422': { description: Refused attempt } }
+  /api/v1/transactions/{transactionId}/reverse:
+    post:
+      parameters: [{ name: transactionId, in: path, required: true, schema: { type: string, format: uuid } }, { $ref: '#/components/parameters/idempotencyKey' }]
+      responses: { '201': { description: Compensating reversal posted } }
+  /api/v1/transactions/{transactionId}/approve:
+    post:
+      parameters: [{ name: transactionId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '201': { description: High-value transfer approved and posted }, '422': { description: Approval recheck rejected } }
+  /api/v1/admin/reconciliation:
+    get: { responses: { '200': { description: Snapshot versus independently derived ledger balances } } }
+  /api/v1/admin/risk/alerts:
+    get: { responses: { '200': { description: Refused and risk-signaled attempts } } }
+  /api/v1/admin/summary:
+    get: { responses: { '200': { description: Admin/auditor account and transaction summary } } }
+  /api/v1/admin/audit/events:
+    get: { responses: { '200': { description: Append-only audit history } } }
+  /api/v1/admin/audit/verify:
+    get: { responses: { '200': { description: Audit hash-chain verification result } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    accountId: { name: accountId, in: path, required: true, schema: { type: string, format: uuid } }
+    idempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 8, maxLength: 255 } }
+  schemas:
+    Credentials:
+      type: object
+      required: [email, password]
+      properties: { email: { type: string, format: email }, password: { type: string, minLength: 12, writeOnly: true } }
+    Amount:
+      type: object
+      required: [amountPaise]
+      properties: { amountPaise: { type: string, pattern: '^[1-9][0-9]*$' } }
+    Transfer:
+      allOf:
+        - $ref: '#/components/schemas/Amount'
+        - type: object
+          required: [destinationAccountId]
+          properties: { destinationAccountId: { type: string, format: uuid } }
+  responses:
+    Unauthorized: { description: Authentication required }
+    Conflict: { description: Conflict or idempotency payload mismatch }

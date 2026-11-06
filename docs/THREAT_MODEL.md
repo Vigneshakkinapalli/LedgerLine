@@ -1,0 +1,7 @@
+# Threat model
+
+Assets: customer balances, credentials, JWTs, idempotency records, ledger history, and audit evidence. Trust boundaries are the browser/API boundary, API/database boundary, operator/admin boundary, and external settlement boundary.
+
+Primary threats and controls: forged client authorization (server-side JWT/session, role, ownership, and permission checks); credential theft (Argon2id, secret environment variables, TLS in deployment, short-lived tokens, database-backed logout revocation); account enumeration (generic login errors and hashed-email security audit metadata); replay/double submit (unique idempotency key plus request hash); race-condition overdraft (row locks and deferred database checks); SQL injection (parameterized `pg` queries); ledger tampering (restrictive foreign keys and immutable triggers); information leakage (password hashes/roles are not client-controlled or exposed, and logs contain no passwords/tokens); abuse/DoS (body limits and per-email/IP login rate limiting); compromised admin (least privilege, audit events, self-role-change and last-admin protections).
+
+Residual risks: production TLS/secret rotation, distributed rate-limit storage, CSRF posture if cookie authentication is introduced, account recovery/MFA, operational reconciliation scheduling, and payment-rail settlement are not implemented. Do not connect this foundation to real payment rails until those controls are reviewed.
