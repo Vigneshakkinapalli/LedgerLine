@@ -1,0 +1,83 @@
+databases:
+  - name: ledgerline-db
+    databaseName: ledgerline
+    user: ledgerline
+    plan: starter
+    postgresMajorVersion: "16"
+    region: singapore  # change to the region closest to your users
+
+services:
+  # Express API
+  - type: web
+    name: ledgerline-api
+    runtime: node
+    rootDir: backend
+    plan: starter
+    region: singapore
+    buildCommand: npm ci && npm run build
+    preDeployCommand: node dist/src/db/migrate.js
+    startCommand: node dist/src/server.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ledgerline-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CORS_ORIGIN
+        sync: false      # set to the deployed frontend URL, e.g. https://ledgerline-frontend.onrender.com
+      - key: HIGH_VALUE_THRESHOLD_PAISE
+        sync: false      # optional: approvals threshold in paise (default 10000000 = ₹1,00,000)
+      - key: LOG_LEVEL
+        value: info
+
+  # Background worker: executes scheduled and recurring payments
+  - type: worker
+    name: ledgerline-worker
+    runtime: node
+    rootDir: backend
+    plan: starter
+    region: singapore
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/src/worker.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ledgerline-db
+          property: connectionString
+      - key: LOG_LEVEL
+        value: info
+
+  # React + Vite static frontend
+  - type: web
+    name: ledgerline-frontend
+    runtime: static
+    rootDir: "."
+    plan: free
+    buildCommand: npm ci && npm run build --workspace frontend
+    staticPublishPath: frontend/dist
+    autoDeploy: true
+    pullRequestPreviewsEnabled: false
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: VITE_API_URL
+        sync: false      # set to the deployed API URL, e.g. https://ledgerline-api.onrender.com/api/v1
