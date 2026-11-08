@@ -8,7 +8,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/src/server.js",
-    "test": "vitest run",
+    "start:worker": "node dist/src/worker.js",
+    "test": "node ../scripts/test.mjs",
+    "test:vitest": "vitest run",
     "db:migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {

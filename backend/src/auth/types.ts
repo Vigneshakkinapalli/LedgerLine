@@ -11,6 +11,7 @@ export interface AuthenticatedUser {
 export interface PublicUser {
   id: string;
   email: string;
+  fullName: string | null;
   roles: RoleName[];
   createdAt: string;
 }

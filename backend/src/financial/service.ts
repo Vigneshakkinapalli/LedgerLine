@@ -20,6 +20,7 @@ async function lockAccounts(client: pg.PoolClient, ids: string[]): Promise<Map<s
 }
 
 async function permitted(client: pg.PoolClient, account: AccountRow, actor: OperationInput['actor'], permission: string): Promise<boolean> {
+  if (actor.roles.includes('AUDITOR') && !actor.roles.includes('ADMIN')) return false;
   if (actor.roles.includes('ADMIN') || account.owner_user_id === actor.id) return true;
   const result = await client.query<{ exists: boolean }>('SELECT EXISTS (SELECT 1 FROM account_permissions WHERE account_id = $1 AND user_id = $2 AND permission = $3)', [account.id, actor.id, permission]);
   return result.rows[0].exists;
@@ -27,7 +28,7 @@ async function permitted(client: pg.PoolClient, account: AccountRow, actor: Oper
 
 async function refusal(client: pg.PoolClient, input: OperationInput, keyId: string, code: string, message: string): Promise<OperationResult> {
   const body = refusedBody(code, message);
-  await client.query('INSERT INTO transaction_attempts (user_id, status, reason_code, amount_paise, operation) VALUES ($1, \'refused\', $2, $3, $4)', [input.actor.id, code, input.amountPaise.toString(), input.operation]);
+  await client.query('INSERT INTO transaction_attempts (user_id, account_id, status, reason_code, amount_paise, operation) VALUES ($1, $2, \'refused\', $3, $4, $5)', [input.actor.id, input.accountId, code, input.amountPaise.toString(), input.operation]);
   await client.query('UPDATE idempotency_keys SET response_status = $2, response_body = $3 WHERE id = $1', [keyId, 422, JSON.stringify(body)]);
   await audit(client, input.actor.id, 'TRANSACTION_REFUSED', 'account', input.accountId, { operation: input.operation, reason: code, amountPaise: input.amountPaise.toString() }, input.correlationId);
   return { status: 422, body };
@@ -84,7 +85,7 @@ export async function executeOperation(input: OperationInput): Promise<Operation
          VALUES ($1, $2, 'pending', $3, $4, $5, 'transfer', 'pending', $6, $7, $8)`,
         [pendingId, pendingReference, source.currency, idempotency.id, input.actor.id, source.id, destination!.id, input.amountPaise.toString()]
       );
-      await client.query('INSERT INTO transaction_attempts (transaction_id, user_id, status, reason_code, amount_paise, operation) VALUES ($1, $2, \'accepted\', \'HIGH_VALUE_APPROVAL_REQUIRED\', $3, \'transfer\')', [pendingId, input.actor.id, input.amountPaise.toString()]);
+      await client.query('INSERT INTO transaction_attempts (transaction_id, user_id, account_id, status, reason_code, amount_paise, operation) VALUES ($1, $2, $3, \'accepted\', \'HIGH_VALUE_APPROVAL_REQUIRED\', $4, \'transfer\')', [pendingId, input.actor.id, source.id, input.amountPaise.toString()]);
       await client.query('UPDATE idempotency_keys SET transaction_id = $2, response_status = 202, response_body = $3 WHERE id = $1', [idempotency.id, pendingId, JSON.stringify({ transaction: { id: pendingId, reference: pendingReference, type: 'transfer', status: 'pending', approvalStatus: 'pending', amountPaise: input.amountPaise.toString() } })]);
       await audit(client, input.actor.id, 'TRANSACTION_PENDING_APPROVAL', 'ledger_transaction', pendingId, { reason: 'HIGH_VALUE_APPROVAL_REQUIRED', amountPaise: input.amountPaise.toString() }, input.correlationId);
       return { status: 202, body: { transaction: { id: pendingId, reference: pendingReference, type: 'transfer', status: 'pending', approvalStatus: 'pending', amountPaise: input.amountPaise.toString() } } };
@@ -116,7 +117,7 @@ export async function executeOperation(input: OperationInput): Promise<Operation
       await client.query('UPDATE accounts SET balance_paise = balance_paise + $2, updated_at = now() WHERE id = $1', [accountId, amount.toString()]);
     }
     await client.query("UPDATE ledger_transactions SET status = 'posted', posted_at = now() WHERE id = $1", [transactionId]);
-    await client.query('INSERT INTO transaction_attempts (transaction_id, user_id, status, amount_paise, operation) VALUES ($1, $2, \'accepted\', $3, $4)', [transactionId, input.actor.id, input.amountPaise.toString(), input.operation]);
+    await client.query('INSERT INTO transaction_attempts (transaction_id, user_id, account_id, status, amount_paise, operation) VALUES ($1, $2, $3, \'accepted\', $4, $5)', [transactionId, input.actor.id, source.id, input.amountPaise.toString(), input.operation]);
     const body: Record<string, unknown> = { transaction: { id: transactionId, reference, type: input.operation, status: 'posted', amountPaise: input.amountPaise.toString(), sourceAccountId: source.id, destinationAccountId: destination?.id ?? null } };
     await client.query('UPDATE idempotency_keys SET transaction_id = $2, response_status = 201, response_body = $3 WHERE id = $1', [idempotency.id, transactionId, JSON.stringify(body)]);
     await audit(client, input.actor.id, 'TRANSACTION_POSTED', 'ledger_transaction', transactionId, { operation: input.operation, amountPaise: input.amountPaise.toString() }, input.correlationId);
@@ -189,7 +190,7 @@ export async function reverseTransaction(transactionId: string, actor: Authentic
     }
     await client.query("UPDATE ledger_transactions SET status = 'posted', posted_at = now() WHERE id = $1", [reversalId]);
     await client.query("UPDATE ledger_transactions SET status = 'reversed' WHERE id = $1", [transactionId]);
-    await client.query('INSERT INTO transaction_attempts (transaction_id, user_id, status, amount_paise, operation) VALUES ($1, $2, \'accepted\', NULL, \'reversal\')', [reversalId, actor.id]);
+    await client.query('INSERT INTO transaction_attempts (transaction_id, user_id, account_id, status, amount_paise, operation) VALUES ($1, $2, $3, \'accepted\', NULL, \'reversal\')', [reversalId, actor.id, entries.rows[0]?.account_id ?? null]);
     const body: Record<string, unknown> = { transaction: { id: reversalId, reference, type: 'reversal', status: 'posted', reversalOf: transactionId } };
     await client.query('UPDATE idempotency_keys SET transaction_id = $2, response_status = 201, response_body = $3 WHERE id = $1', [idempotency.id, reversalId, JSON.stringify(body)]);
     await audit(client, actor.id, 'TRANSACTION_REVERSED', 'ledger_transaction', transactionId, { reversalTransactionId: reversalId }, correlationId);
@@ -197,30 +198,56 @@ export async function reverseTransaction(transactionId: string, actor: Authentic
   });
 }
 
-export async function statement(accountId: string, actor: AuthenticatedUser) {
+export async function statement(accountId: string, actor: AuthenticatedUser, options: { page: number; pageSize: number } = { page: 1, pageSize: 50 }) {
   const result = await queryAccountAccess(accountId, actor);
   if (!result) throw new AppError(404, 'ACCOUNT_NOT_FOUND', 'Account not found');
   if (!result.allowed) throw new AppError(403, 'FORBIDDEN', 'You do not have permission to view this account');
-  const entries = await (await import('../db/pool.js')).query<{
-    entry_id: string; transaction_id: string; reference: string; transaction_type: string; status: string; amount_paise: string; created_at: Date; initiator_email: string | null; counterparty_code: string | null; running_balance: string;
-  }>(
-    `SELECT le.id AS entry_id, lt.id AS transaction_id, lt.reference, lt.transaction_type, lt.status, le.amount_paise, le.created_at,
-            u.email AS initiator_email,
-            (SELECT a2.code FROM ledger_entries le2 JOIN accounts a2 ON a2.id = le2.account_id
-             WHERE le2.transaction_id = le.transaction_id AND le2.account_id <> le.account_id LIMIT 1) AS counterparty_code,
-            SUM(le.amount_paise) OVER (PARTITION BY le.account_id ORDER BY le.created_at, le.id)::text AS running_balance
-     FROM ledger_entries le JOIN ledger_transactions lt ON lt.id = le.transaction_id
-     LEFT JOIN users u ON u.id = lt.initiated_by
-     WHERE le.account_id = $1 ORDER BY le.created_at DESC, le.id DESC LIMIT 500`,
-    [accountId]
-  );
-  const attempts = await (await import('../db/pool.js')).query<{ id: string; status: string; reason_code: string | null; amount_paise: string | null; operation: string; created_at: Date; email: string | null }>(
-    `SELECT ta.id, ta.status, ta.reason_code, ta.amount_paise, ta.operation, ta.created_at, u.email
-     FROM transaction_attempts ta LEFT JOIN users u ON u.id = ta.user_id
-     WHERE ta.status <> 'accepted' AND (ta.user_id = $2 OR ta.transaction_id IN (SELECT le.transaction_id FROM ledger_entries le WHERE le.account_id = $1))
-     ORDER BY ta.created_at DESC LIMIT 100`, [accountId, actor.id]
-  );
-  return { accountId, entries: entries.rows.map(entry => ({ ...entry, amountPaise: entry.amount_paise, amount_paise: undefined, createdAt: new Date(entry.created_at).toISOString(), runningBalancePaise: entry.running_balance, initiator: entry.initiator_email, counterparty: entry.counterparty_code })), refusedAttempts: attempts.rows.map(attempt => ({ id: attempt.id, status: attempt.status, reason: attempt.reason_code, amountPaise: attempt.amount_paise, operation: attempt.operation, initiator: attempt.email, createdAt: new Date(attempt.created_at).toISOString() })) };
+  const poolQuery = (await import('../db/pool.js')).query;
+  type StatementRow = { record_type: 'entry' | 'attempt'; record_id: string; transaction_id: string | null; reference: string | null; operation: string; status: string; amount_paise: string | null; created_at: Date; initiator: string | null; counterparty: string | null; reason: string | null; running_balance: string };
+  const offset = (options.page - 1) * options.pageSize;
+  const [rows, count] = await Promise.all([
+    poolQuery<StatementRow>(
+      `WITH events AS (
+         SELECT 'entry'::text AS record_type, le.id::text AS record_id, lt.id::text AS transaction_id,
+                lt.reference, lt.transaction_type AS operation, lt.status::text AS status,
+                le.amount_paise::text AS amount_paise, le.created_at, u.email AS initiator,
+                (SELECT a2.code FROM ledger_entries le2 JOIN accounts a2 ON a2.id = le2.account_id
+                 WHERE le2.transaction_id = le.transaction_id AND le2.account_id <> le.account_id LIMIT 1) AS counterparty,
+                NULL::text AS reason, le.amount_paise AS balance_delta
+         FROM ledger_entries le JOIN ledger_transactions lt ON lt.id = le.transaction_id
+         LEFT JOIN users u ON u.id = lt.initiated_by
+         WHERE le.account_id = $1
+         UNION ALL
+         SELECT 'attempt', ta.id::text, NULL::text, NULL::text, ta.operation, ta.status::text,
+                ta.amount_paise::text, ta.created_at, u.email, NULL::text, ta.reason_code, 0::bigint
+         FROM transaction_attempts ta LEFT JOIN users u ON u.id = ta.user_id
+         WHERE ta.account_id = $1 AND ta.status <> 'accepted'
+       ), with_balances AS (
+         SELECT events.*, SUM(balance_delta) OVER (ORDER BY created_at, record_type, record_id
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)::text AS running_balance
+         FROM events
+       )
+       SELECT record_type, record_id, transaction_id, reference, operation, status, amount_paise,
+              created_at, initiator, counterparty, reason, running_balance
+       FROM with_balances ORDER BY created_at DESC, record_type DESC, record_id DESC LIMIT $2 OFFSET $3`,
+      [accountId, options.pageSize, offset]
+    ),
+    poolQuery<{ total: string }>(
+      `SELECT ((SELECT count(*) FROM ledger_entries WHERE account_id = $1) +
+               (SELECT count(*) FROM transaction_attempts WHERE account_id = $1 AND status <> 'accepted'))::text AS total`,
+      [accountId]
+    )
+  ]);
+  const items = rows.rows.map(row => row.record_type === 'entry'
+    ? { type: 'entry' as const, id: row.record_id, transactionId: row.transaction_id, reference: row.reference, operation: row.operation, status: row.status, amountPaise: row.amount_paise, createdAt: row.created_at.toISOString(), initiator: row.initiator, counterparty: row.counterparty, runningBalancePaise: row.running_balance }
+    : { type: 'refused_attempt' as const, id: row.record_id, operation: row.operation, status: row.status, reason: row.reason, amountPaise: row.amount_paise, createdAt: row.created_at.toISOString(), initiator: row.initiator, runningBalancePaise: row.running_balance });
+  return {
+    accountId,
+    items,
+    entries: items.filter((item): item is Extract<typeof items[number], { type: 'entry' }> => item.type === 'entry').map(item => ({ transaction_id: item.transactionId, reference: item.reference, transaction_type: item.operation, status: item.status, amountPaise: item.amountPaise!, createdAt: item.createdAt, runningBalancePaise: item.runningBalancePaise, initiator: item.initiator, counterparty: item.counterparty })),
+    refusedAttempts: items.filter((item): item is Extract<typeof items[number], { type: 'refused_attempt' }> => item.type === 'refused_attempt').map(item => ({ id: item.id, status: item.status, reason: item.reason, amountPaise: item.amountPaise, operation: item.operation, initiator: item.initiator, createdAt: item.createdAt, runningBalancePaise: item.runningBalancePaise })),
+    pagination: { page: options.page, pageSize: options.pageSize, totalRecords: Number(count.rows[0].total), totalPages: Math.ceil(Number(count.rows[0].total) / options.pageSize) }
+  };
 }
 
 export async function transactionDetail(transactionId: string, actor: AuthenticatedUser) {
@@ -239,12 +266,12 @@ export async function transactionDetail(transactionId: string, actor: Authentica
 }
 
 async function queryAccountAccess(accountId: string, actor: AuthenticatedUser) {
-  const result = await (await import('../db/pool.js')).query<{ id: string; owner_user_id: string | null; permission: string | null; kind: string; balance_paise: string }>(
-    'SELECT a.id, a.owner_user_id, a.kind, a.balance_paise, ap.permission FROM accounts a LEFT JOIN account_permissions ap ON ap.account_id = a.id AND ap.user_id = $2 WHERE a.id = $1', [accountId, actor.id]
+  const result = await (await import('../db/pool.js')).query<{ id: string; owner_user_id: string | null; has_view_permission: boolean; kind: string; balance_paise: string }>(
+    "SELECT a.id, a.owner_user_id, a.kind, a.balance_paise, EXISTS (SELECT 1 FROM account_permissions ap WHERE ap.account_id = a.id AND ap.user_id = $2 AND ap.permission = 'view') AS has_view_permission FROM accounts a WHERE a.id = $1", [accountId, actor.id]
   );
   const row = result.rows[0];
   if (!row) return null;
-  return { ...row, allowed: actor.roles.includes('ADMIN') || actor.roles.includes('AUDITOR') || row.owner_user_id === actor.id || row.permission === 'view' };
+  return { ...row, allowed: actor.roles.includes('ADMIN') || actor.roles.includes('AUDITOR') || row.owner_user_id === actor.id || row.has_view_permission };
 }
 
 export async function reconciliation() {

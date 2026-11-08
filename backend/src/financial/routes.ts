@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { authenticate, requireRoles } from '../middleware.js';
 import { validationError } from '../errors.js';
-import { amountOnlySchema, transferSchema } from './schemas.js';
-import { analytics, approveTransaction, auditVerification, executeOperation, reverseTransaction, statement, transactionDetail } from './service.js';
+import { amountOnlySchema, analyticsQuerySchema, statementQuerySchema, transferSchema } from './schemas.js';
+import { approveTransaction, auditVerification, executeOperation, reverseTransaction, statement, transactionDetail } from './service.js';
+import { analytics } from './reporting.js';
 import { transactionRateLimit } from './rate-limit.js';
 
 function idempotency(req: { header(name: string): string | undefined }): string {
@@ -12,9 +13,15 @@ function idempotency(req: { header(name: string): string | undefined }): string 
 }
 
 export const financialRouter = Router();
-financialRouter.get('/analytics', authenticate, async (_req, res, next) => { try { return res.json(await analytics()); } catch (error) { return next(error); } });
+financialRouter.get('/analytics', authenticate, requireRoles('ADMIN', 'AUDITOR'), async (req, res, next) => {
+  const parsed = analyticsQuerySchema.safeParse(req.query);
+  if (!parsed.success) return next(validationError('Analytics filters are invalid'));
+  try { return res.json(await analytics(parsed.data)); } catch (error) { return next(error); }
+});
 financialRouter.get('/accounts/:accountId/transactions', authenticate, async (req, res, next) => {
-  try { return res.json(await statement(String(req.params.accountId), req.auth!)); } catch (error) { return next(error); }
+  const parsed = statementQuerySchema.safeParse(req.query);
+  if (!parsed.success) return next(validationError('page must be positive and pageSize must be between 1 and 100'));
+  try { return res.json(await statement(String(req.params.accountId), req.auth!, parsed.data)); } catch (error) { return next(error); }
 });
 financialRouter.post('/transactions/:transactionId/reverse', authenticate, requireRoles('ADMIN'), async (req, res, next) => {
   try {

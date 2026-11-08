@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { login, logout, recordFailedLogin, register } from './service.js';
-import { credentialsSchema } from './schemas.js';
+import { credentialsSchema, registrationSchema } from './schemas.js';
 import { authResponse } from './jwt.js';
 import { authenticate } from './middleware.js';
 import { isLoginRateLimited, loginRateLimitKey, recordLoginFailure, clearLoginFailures } from './rate-limit.js';
@@ -11,9 +11,9 @@ export const authRouter = Router();
 function correlation(req: { header(name: string): string | undefined }): string | undefined { return req.header('x-correlation-id'); }
 
 authRouter.post('/register', async (req, res, next) => {
-  const parsed = credentialsSchema.safeParse(req.body);
-  if (!parsed.success) return next(validationError('Email and password are required; password must be at least 12 characters'));
-  try { return res.status(201).json(await register(parsed.data.email, parsed.data.password, correlation(req))); } catch (error) { return next(error); }
+  const parsed = registrationSchema.safeParse(req.body);
+  if (!parsed.success) return next(validationError('Full name, email and password are required; password must be at least 12 characters'));
+  try { return res.status(201).json(await register(parsed.data.email, parsed.data.password, correlation(req), parsed.data.fullName)); } catch (error) { return next(error); }
 });
 
 authRouter.post('/login', async (req, res, next) => {

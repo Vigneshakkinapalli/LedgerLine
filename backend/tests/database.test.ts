@@ -9,7 +9,7 @@ describe.skipIf(!runDbTests)('PostgreSQL schema integration', () => {
     const result = await query<{ ok: number }>('SELECT 1 AS ok');
     expect(result.rows[0].ok).toBe(1);
     const migrations = await query<{ filename: string }>('SELECT filename FROM schema_migrations ORDER BY filename');
-    expect(migrations.rows.map(row => row.filename)).toEqual(expect.arrayContaining(['001_initial_schema.sql', '002_auth_sessions.sql', '003_financial_engine.sql', '004_approval_workflow.sql']));
+    expect(migrations.rows.map(row => row.filename)).toEqual(expect.arrayContaining(['001_initial_schema.sql', '002_auth_sessions.sql', '003_financial_engine.sql', '004_approval_workflow.sql', '005_module_support.sql', '006_immutable_ledger_entries.sql', '007_attempt_account_scope.sql', '008_reconciliation_history.sql', '009_scheduled_payments.sql', '010_backfill_refused_attempt_accounts.sql', '011_auth_names_and_schedule_references.sql', '012_separate_recurring_payments.sql']));
   });
 
   it('contains required tables and unique idempotency enforcement', async () => {

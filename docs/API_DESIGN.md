@@ -12,6 +12,14 @@ Foundation and authentication endpoints:
 - `GET /api/v1/accounts/:accountId` — account-holder ownership/permission access, with admin and auditor read access.
 - `GET /api/v1/accounts/:accountId/transfer-destinations` — active INR customer accounts eligible as destinations for an authorized source account; excludes the source and returns masked labels.
 - `GET /api/v1/accounts/:accountId/transactions` — enriched statement entries with running balance, initiator, counterparty, and refused-attempt records.
+- `GET /api/v1/scheduled-payments` — owner-scoped schedule list with Admin/Auditor read access.
+- `GET /api/v1/scheduled-payments/eligible-accounts` — active INR accounts owned by the caller or delegated with transfer permission, returned with masked identifiers.
+- `POST /api/v1/scheduled-payments` — create a one-time future internal INR transfer from an owned or transfer-permitted account; requires an idempotency key and high-value schedules are rejected in favor of immediate Admin-approved transfers.
+- `GET /api/v1/scheduled-payments/:scheduleId` — one-time schedule plus persisted occurrence and attempt history; non-owner IDs are hidden as 404.
+- `POST /api/v1/scheduled-payments/:scheduleId/actions` — owner/Admin pause, resume, or cancel a one-time schedule.
+- `GET|POST /api/v1/recurring-payments` — owner-scoped list and create a distinct daily/weekly/monthly recurring configuration; create requires an idempotency key.
+- `GET /api/v1/recurring-payments/:paymentId` — recurring configuration plus occurrence/attempt history, owner-scoped.
+- `POST /api/v1/recurring-payments/:paymentId/actions` — owner/Admin pause, resume, or cancel a recurrence.
 - `POST /api/v1/accounts/:accountId/permissions` — ADMIN-only account permission grant.
 - `PATCH /api/v1/accounts/:accountId/status` — ADMIN-only freeze/unfreeze/close control.
 - `PUT /api/v1/accounts/:accountId/limits` — ADMIN-only daily paise limits.
@@ -22,6 +30,9 @@ Foundation and authentication endpoints:
 - `POST /api/v1/transactions/:transactionId/reverse` — ADMIN compensating reversal.
 - `GET /api/v1/transactions/:transactionId` — authorized transaction detail with ledger legs and audit timeline.
 - `GET /api/v1/admin/reconciliation` — ADMIN/AUDITOR snapshot discrepancy report.
+- `POST /api/v1/admin/reconciliation/run` and `GET /api/v1/admin/reconciliation/history` — run and inspect persisted reconciliation history.
+- `GET /api/v1/admin/reconciliation/runs/:runId/findings` and `GET|PATCH /api/v1/admin/reconciliation/findings/:findingId` — inspect findings; Admin investigates and maker-checker resolves without modifying ledger records.
+- `GET|PUT /api/v1/admin/reconciliation/schedule` — read/configure optional daily/weekly reconciliation; a separate worker is required.
 - `GET /api/v1/admin/risk/alerts` — ADMIN/AUDITOR explainable refused-attempt report.
 - `GET /api/v1/admin/audit/verify` — ADMIN/AUDITOR audit hash-chain verification result.
 - `GET /api/v1/admin/audit/events` — ADMIN/AUDITOR append-only audit history.

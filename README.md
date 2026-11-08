@@ -13,7 +13,18 @@ LedgerLine now includes the Phase 1 foundation, authentication/RBAC, and a Postg
 
 The available commands are defined in the root and workspace `package.json` files. PostgreSQL client tools are not required on the host because Compose supplies the database.
 
-The API is documented in `docs/openapi.yaml`. Use `RUN_DB_TESTS=1 npm test` for the real PostgreSQL integration suite; plain `npm test` runs only the database-independent tests. See `docs/FINANCIAL_INVARIANTS.md`, `docs/THREAT_MODEL.md`, and `PROMPTS.md` before extending the transaction engine.
+The API is documented in `docs/openapi.yaml`. `RUN_DB_TESTS=1 npm test` creates a uniquely named temporary database on a local PostgreSQL server, applies all migrations, runs the API/schema integration suite, and drops only that temporary database. The test runner refuses remote PostgreSQL hosts. Plain `npm test` runs database-independent tests. See `docs/FINANCIAL_INVARIANTS.md`, `docs/THREAT_MODEL.md`, and `PROMPTS.md` before extending the transaction engine.
+
+## Analytics and reconciliation
+
+The Admin/Auditor Analytics page queries persisted ledger data and supports date, account, type, status, and day/week/month filters. CSV is generated from returned report data; “Save as PDF” opens the browser print dialog. Admins can run reconciliation immediately, review persisted run history/findings, and record an investigation or resolution note. Reconciliation does not fix or rewrite a ledger.
+
+Optional scheduled reconciliation is disabled by default. Configure a daily/weekly schedule from the Reconciliation Center and run the separate worker process after building:
+
+- `npm run build`
+- `npm run worker`
+
+The worker requires the same PostgreSQL configuration as the API and should be supervised as a separate deployment process. It also executes future-dated and daily/weekly/monthly internal INR transfer schedules. Each scheduled occurrence and retry is persisted with an idempotency key; crash recovery reuses the same key, while a later insufficient-funds retry uses a distinct key. High-value scheduled transfers are rejected instead of bypassing Admin approval. Bulk payments, MFA, multi-currency/FX, and payment-rail integration remain planned, not implemented.
 
 ## Development transfer recipient
 

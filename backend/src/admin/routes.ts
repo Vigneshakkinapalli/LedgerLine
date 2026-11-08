@@ -4,6 +4,8 @@ import { listUsers, setUserRoles } from '../auth/service.js';
 import { roleUpdateSchema } from '../auth/schemas.js';
 import { validationError } from '../errors.js';
 import { auditVerification, reconciliation, riskAlerts } from '../financial/service.js';
+import { reconciliationFindingDetail, reconciliationFindingsForRun, reconciliationHistory, reconciliationSchedule, runReconciliation, updateReconciliationFinding, updateReconciliationSchedule } from '../financial/reporting.js';
+import { reconciliationFindingUpdateSchema, reconciliationScheduleSchema, statementQuerySchema } from '../financial/schemas.js';
 
 export const adminRouter = Router();
 adminRouter.get('/summary', ...requireAdminOrAuditor, async (_req, res, next) => {
@@ -18,6 +20,33 @@ adminRouter.get('/summary', ...requireAdminOrAuditor, async (_req, res, next) =>
 });
 adminRouter.get('/reconciliation', ...requireAdminOrAuditor, async (_req, res, next) => {
   try { return res.json(await reconciliation()); } catch (error) { return next(error); }
+});
+adminRouter.post('/reconciliation/run', ...requireAdmin, async (req, res, next) => {
+  try { return res.status(201).json(await runReconciliation(req.auth!, req.header('x-correlation-id'))); } catch (error) { return next(error); }
+});
+adminRouter.get('/reconciliation/schedule', ...requireAdminOrAuditor, async (_req, res, next) => {
+  try { return res.json({ schedule: await reconciliationSchedule() }); } catch (error) { return next(error); }
+});
+adminRouter.put('/reconciliation/schedule', ...requireAdmin, async (req, res, next) => {
+  const parsed = reconciliationScheduleSchema.safeParse(req.body);
+  if (!parsed.success) return next(validationError('enabled and a daily/weekly cadence are required'));
+  try { return res.json({ schedule: await updateReconciliationSchedule(parsed.data, req.auth!, req.header('x-correlation-id')) }); } catch (error) { return next(error); }
+});
+adminRouter.get('/reconciliation/history', ...requireAdminOrAuditor, async (req, res, next) => {
+  const parsed = statementQuerySchema.safeParse(req.query);
+  if (!parsed.success) return next(validationError('page must be positive and pageSize must be between 1 and 100'));
+  try { return res.json(await reconciliationHistory(parsed.data.page, parsed.data.pageSize)); } catch (error) { return next(error); }
+});
+adminRouter.get('/reconciliation/findings/:findingId', ...requireAdminOrAuditor, async (req, res, next) => {
+  try { return res.json({ finding: await reconciliationFindingDetail(String(req.params.findingId)) }); } catch (error) { return next(error); }
+});
+adminRouter.get('/reconciliation/runs/:runId/findings', ...requireAdminOrAuditor, async (req, res, next) => {
+  try { return res.json({ findings: await reconciliationFindingsForRun(String(req.params.runId)) }); } catch (error) { return next(error); }
+});
+adminRouter.patch('/reconciliation/findings/:findingId', ...requireAdmin, async (req, res, next) => {
+  const parsed = reconciliationFindingUpdateSchema.safeParse(req.body);
+  if (!parsed.success) return next(validationError('A valid investigating/resolved status and resolution note are required'));
+  try { return res.json({ finding: await updateReconciliationFinding(String(req.params.findingId), parsed.data, req.auth!, req.header('x-correlation-id')) }); } catch (error) { return next(error); }
 });
 adminRouter.get('/risk/alerts', ...requireAdminOrAuditor, async (_req, res, next) => {
   try { return res.json({ alerts: await riskAlerts() }); } catch (error) { return next(error); }

@@ -8,18 +8,18 @@ export const createAccountInput = z.object({ userId: z.string().uuid(), currency
 
 export async function getAccount(accountId: string, user: AuthenticatedUser) {
   const result = await query<{
-    id: string; code: string; kind: string; status: string; currency: string; balance_paise: string; owner_user_id: string | null; created_at: Date; permission: string | null;
+    id: string; code: string; kind: string; status: string; currency: string; balance_paise: string; owner_user_id: string | null; created_at: Date; has_view_permission: boolean;
   }>(
     `SELECT a.id, a.code, a.kind, a.status, a.currency, a.balance_paise, a.owner_user_id, a.created_at,
-            ap.permission
-     FROM accounts a LEFT JOIN account_permissions ap ON ap.account_id = a.id AND ap.user_id = $2
+                 EXISTS (SELECT 1 FROM account_permissions ap WHERE ap.account_id = a.id AND ap.user_id = $2 AND ap.permission = 'view') AS has_view_permission
+               FROM accounts a
      WHERE a.id = $1`,
     [accountId, user.id]
   );
   const account = result.rows[0];
   if (!account) throw new AppError(404, 'ACCOUNT_NOT_FOUND', 'Account not found');
   const privileged = user.roles.includes('ADMIN') || user.roles.includes('AUDITOR');
-  const holderAccess = account.owner_user_id === user.id || account.permission === 'view';
+  const holderAccess = account.owner_user_id === user.id || account.has_view_permission;
   if (!privileged && !holderAccess) throw new AppError(403, 'FORBIDDEN', 'You do not have permission to view this account');
   return {
     id: account.id,
@@ -57,19 +57,21 @@ export async function listTransferDestinations(sourceAccountId: string, user: Au
   if (!source.rows[0]) throw new AppError(404, 'ACCOUNT_NOT_FOUND', 'Account not found');
   const hasAccess = user.roles.includes('ADMIN') || source.rows[0].owner_user_id === user.id || (await query<{ exists: boolean }>("SELECT EXISTS (SELECT 1 FROM account_permissions WHERE account_id = $1 AND user_id = $2 AND permission = 'transfer')", [sourceAccountId, user.id])).rows[0].exists;
   if (!hasAccess) throw new AppError(403, 'FORBIDDEN', 'You do not have permission to transfer from this account');
-  const result = await query<{
-    id: string; code: string; kind: string; status: string; currency: string; balance_paise: string; owner_user_id: string | null; created_at: Date; email: string | null;
-  }>(
-    `SELECT a.id, a.code, a.kind, a.status, a.currency, a.balance_paise, a.owner_user_id, a.created_at, u.email
-     FROM accounts a LEFT JOIN users u ON u.id = a.owner_user_id
+  const result = await query<{ id: string; code: string }>(
+    `SELECT a.id, a.code
+     FROM accounts a
      WHERE a.id <> $1 AND a.kind = 'customer' AND a.status = 'active' AND a.currency = 'INR'
      ORDER BY a.created_at ASC, a.id ASC`,
     [sourceAccountId]
   );
-  return result.rows.map(account => accountView(account));
+  return result.rows.map(account => {
+    const identifier = account.code.replace(/^ACC_/, '').slice(-8).toUpperCase();
+    return { id: account.id, displayName: 'LedgerLine recipient', maskedIdentifier: `•••• ${identifier}` };
+  });
 }
 
 export async function createAccount(userId: string, currency: 'INR', actor: AuthenticatedUser, correlationId?: string) {
+  if (actor.roles.includes('AUDITOR') && !actor.roles.includes('ADMIN')) throw new AppError(403, 'FORBIDDEN', 'Auditors cannot create accounts');
   if (!actor.roles.includes('ADMIN') && actor.id !== userId) throw new AppError(403, 'FORBIDDEN', 'You do not have permission to create this account');
   const existing = await query<{ id: string }>('SELECT id FROM accounts WHERE owner_user_id = $1 AND currency = $2 AND kind = \'customer\'', [userId, currency]);
   if (existing.rows[0]) throw new AppError(409, 'ACCOUNT_EXISTS', 'An account already exists for this currency');

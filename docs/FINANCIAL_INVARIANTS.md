@@ -9,5 +9,8 @@ LedgerLine uses signed integer paise: a positive entry increases an account's ba
 5. **Immutability:** posted entries and material posted transaction fields cannot be updated or deleted by database triggers and restrictive foreign keys.
 6. **Idempotency:** `(user_id, key)` is unique in PostgreSQL, preventing duplicate keys from creating separate effects; the service locks/read the key and replays the original response.
 7. **Atomic failure:** debit, credit, status transition, idempotency record, and audit event belong in one `BEGIN`/`COMMIT`; any error rolls the whole unit back.
+8. **Reconciliation is non-corrective:** reconciliation compares snapshots and immutable ledger facts, persists findings, and records investigation notes only. A resolution action never updates/deletes entries or silently changes balances.
+9. **Scheduled reconciliation uniqueness:** the worker locks the singleton due schedule row with `FOR UPDATE SKIP LOCKED` and commits the run, findings and next due time in one PostgreSQL transaction; concurrent workers cannot claim that schedule row at once.
+10. **Scheduled payment uniqueness:** `(schedule_id, scheduled_for)` is unique per occurrence. Each attempt has a persisted unique idempotency key before invoking the financial engine; lease recovery reuses that key, while a new retry increments the attempt number. Every actual transfer posts only through `executeOperation` and its normal account locks/ledger constraints.
 
 Database constraints provide structural guarantees. Transactional application logic provides lock ordering, authorization, request hashing, risk/limit checks, and safe orchestration. Neither frontend state nor an AI model authorizes payments.

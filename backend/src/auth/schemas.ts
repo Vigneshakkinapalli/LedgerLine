@@ -6,6 +6,10 @@ export const credentialsSchema = z.object({
   password: z.string().min(12).max(128)
 }).strict();
 
+export const registrationSchema = credentialsSchema.extend({
+  fullName: z.string().trim().min(1).max(120)
+}).strict();
+
 export const roleUpdateSchema = z.object({
   roles: z.array(z.enum(ROLE_NAMES)).min(1).max(3)
 }).strict();
