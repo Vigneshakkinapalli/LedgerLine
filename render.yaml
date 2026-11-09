@@ -1,19 +1,22 @@
-databases:
-  - name: ledgerline-db
-    databaseName: ledgerline
-    user: ledgerline
-    plan: starter
-    postgresMajorVersion: "16"
-    region: singapore  # change to the region closest to your users
+# LedgerLine — ZERO-COST Render deployment (no card required)
+# Architecture: Render free static site + Render free web service + EXTERNAL free PostgreSQL
+# (Neon https://neon.tech or Supabase https://supabase.com — both offer free Postgres without a card).
+#
+# NOTE: no `databases:` resource is declared here on purpose. Provisioning a Render database
+# (even the expired free trial) requires payment verification on the Render account.
+# DATABASE_URL is supplied manually as a protected environment variable instead.
 
 services:
-  # Express API
+  # Express API — free instance (0.5 CPU / 512MB, spins down after ~15 idle minutes, wakes on requests).
+  # RUN_WORKER_IN_PROCESS=1 runs the scheduled/recurring/reconciliation poll loop inside this process
+  # (safe by design: claim uses FOR UPDATE ... SKIP LOCKED and unique idempotency keys, so it works
+  # whether the loop runs here, in a separate worker, or in multiple instances).
   - type: web
     name: ledgerline-api
     runtime: node
     rootDir: backend
-    plan: starter
-    region: singapore
+    plan: free
+    region: singapore  # choose the region closest to your database and users
     buildCommand: npm ci && npm run build
     preDeployCommand: node dist/src/db/migrate.js
     startCommand: node dist/src/server.js
@@ -25,11 +28,11 @@ services:
       - key: NODE_VERSION
         value: "20"
       - key: DATABASE_URL
-        fromDatabase:
-          name: ledgerline-db
-          property: connectionString
+        sync: false      # paste the external Postgres URL (Neon/Supabase), which already includes ?sslmode=require
       - key: JWT_SECRET
         generateValue: true
+      - key: RUN_WORKER_IN_PROCESS
+        value: "1"
       - key: CORS_ORIGIN
         sync: false      # set to the deployed frontend URL, e.g. https://ledgerline-frontend.onrender.com
       - key: HIGH_VALUE_THRESHOLD_PAISE
@@ -37,28 +40,7 @@ services:
       - key: LOG_LEVEL
         value: info
 
-  # Background worker: executes scheduled and recurring payments
-  - type: worker
-    name: ledgerline-worker
-    runtime: node
-    rootDir: backend
-    plan: starter
-    region: singapore
-    buildCommand: npm ci && npm run build
-    startCommand: node dist/src/worker.js
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: NODE_VERSION
-        value: "20"
-      - key: DATABASE_URL
-        fromDatabase:
-          name: ledgerline-db
-          property: connectionString
-      - key: LOG_LEVEL
-        value: info
-
-  # React + Vite static frontend
+  # React + Vite static frontend — free, no spin-down.
   - type: web
     name: ledgerline-frontend
     runtime: static
@@ -81,3 +63,15 @@ services:
         value: "20"
       - key: VITE_API_URL
         sync: false      # set to the deployed API URL, e.g. https://ledgerline-api.onrender.com/api/v1
+
+# NOTE: there is intentionally NO background worker service (Render workers have NO free plan).
+# The polling loop runs inside the free web service via RUN_WORKER_IN_PROCESS=1 instead.
+# If the API sleeps during idle periods and you need guaranteed execution, the paid option is:
+#   - type: worker
+#     name: ledgerline-worker
+#     runtime: node
+#     rootDir: backend
+#     plan: starter
+#     buildCommand: npm ci && npm run build
+#     startCommand: node dist/src/worker.js
+#     envVars: { DATABASE_URL: same external value, LOG_LEVEL: info }

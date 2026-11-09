@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { pool } from './db/pool.js';
 import { pollScheduledReconciliation } from './financial/reporting.js';
 import { pollScheduledPayments } from './financial/scheduled-payments.js';
@@ -5,6 +6,7 @@ import { pollRecurringPayments } from './financial/recurring-payments.js';
 
 let stopped = false;
 let running = false;
+let timer: NodeJS.Timeout | undefined;
 
 async function poll() {
   if (stopped || running) return;
@@ -21,16 +23,24 @@ async function poll() {
   } finally { running = false; }
 }
 
-const timer = setInterval(() => { void poll(); }, 60_000);
-void poll();
+export function startWorker(intervalMs = 60_000) {
+  stopped = false;
+  timer = setInterval(() => { void poll(); }, intervalMs);
+  void poll();
+  console.log(JSON.stringify({ level: 'info', event: 'ledgerline_worker_started', tasks: ['scheduled_reconciliation', 'scheduled_payments', 'recurring_payments'], pollIntervalSeconds: intervalMs / 1000 }));
+}
+
+const invokedAsCli = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
+if (invokedAsCli) {
+  startWorker();
+  process.once('SIGINT', () => { void shutdown(); });
+  process.once('SIGTERM', () => { void shutdown(); });
+}
 
 async function shutdown() {
   stopped = true;
-  clearInterval(timer);
+  if (timer) clearInterval(timer);
   while (running) await new Promise(resolve => setTimeout(resolve, 50));
   await pool.end();
   process.exit(0);
 }
-process.once('SIGINT', () => { void shutdown(); });
-process.once('SIGTERM', () => { void shutdown(); });
-console.log(JSON.stringify({ level: 'info', event: 'ledgerline_worker_started', tasks: ['scheduled_reconciliation', 'scheduled_payments', 'recurring_payments'], pollIntervalSeconds: 60 }));
